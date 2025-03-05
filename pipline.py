@@ -571,7 +571,64 @@ while True:
   ✅ Sort 31,553 points into regions based on Cerebra ID ✅ Compute RMS per time activation for each region, sort according to the cerebra id to the cube id (Multiple resource theory ID) calculate the region RMS' average and and connect the Region_name to MRT ID Name from csv file., I want to visualize as time series the MRT where the plot title has the name of all regions which is sorted to same the MRT
 """
 
-region_name_map.get(cerebra_id, f"Region {cerebra_id}")
+def load_video_data():
+    """
+    Manually enter the file path to load brain activation video data (.npy file).
+    Returns:
+        np.ndarray: Loaded video data (if not found, dummy data is returned).
+    """
+    file_path = input("Enter the full file path for the video data (.npy file): ").strip()
+    if not os.path.exists(file_path):
+        print(f"❌ Warning: File not found at {file_path}. Returning dummy data.")
+        return np.random.randn(31335, 11250)  # Dummy fallback data (voxels x time)
+    return np.load(file_path)
+
+def load_csv_data():
+    """
+    Manually enter the file path to load the region mapping CSV file.
+    Returns:
+        pd.DataFrame: Loaded CSV data, or None if file is not found.
+    """
+    file_path = input("Enter the full file path for the region CSV file: ").strip()
+    if not os.path.exists(file_path):
+        print(f"❌ Warning: File not found at {file_path}. Please enter a valid path.")
+        return None
+    return pd.read_csv(file_path)
+
+def compute_rms_time_series3(videodata, map_voxel, region_data):
+    """
+    Sort the voxels to their cortical regions and then compute the RMS for each region along
+    all 11250 time activations. Next, sort each region to its corresponding MRT based on the CSV file,
+    compute the average RMS per MRT, and prepare data for visualization.
+
+    Parameters:
+        videodata (np.ndarray): Brain activation data with shape (voxels, time).
+        map_voxel (np.ndarray): 1D array mapping each voxel to a cortical region (Cerebra_ID).
+        region_data (pd.DataFrame): DataFrame with region mapping data. Required columns are:
+            'Cerebra_ID', 'Region_name', 'Multiple resource theory ID', 'MRT ID Name'
+
+    Returns:
+        avg_rms_per_mrt (dict): Dictionary mapping each MRT ID to its average RMS time series.
+        mwl_index (np.ndarray): Overall index (sum of all MRT time series) over time.
+        mrt_regions_map (dict): Mapping from MRT ID to list of region names.
+        mrt_name_map (dict): Mapping from MRT ID to MRT ID Name.
+    """
+    # Check required columns.
+    required_columns = {"Cerebra_ID", "Region_name", "Multiple resource theory ID", "MRT ID Name"}
+    missing_columns = required_columns - set(region_data.columns)
+    if missing_columns:
+        raise ValueError(f"❌ CSV file must contain the following columns: {missing_columns}")
+
+    # Create mapping dictionaries.
+    valid_cerebra_ids = set(region_data["Cerebra_ID"].unique())
+    region_name_map = region_data.set_index("Cerebra_ID")["Region_name"].to_dict()
+    mrt_id_map = region_data.set_index("Cerebra_ID")["Multiple resource theory ID"].to_dict()
+    mrt_name_map = region_data.set_index("Multiple resource theory ID")["MRT ID Name"].to_dict()
+
+    # Build mapping from MRT to its constituent region names.
+    mrt_regions_map = {}
+    for cerebra_id, mrt_id in mrt_id_map.items():
+        region_name = region_name_map.get(cerebra_id, f"Region {cerebra_id}")
         mrt_regions_map.setdefault(mrt_id, []).append(region_name)
 
     # Ensure the voxel mapping length matches the number of voxels in videodata.
@@ -604,10 +661,10 @@ region_name_map.get(cerebra_id, f"Region {cerebra_id}")
 
     return avg_rms_per_mrt, mwl_index, mrt_regions_map, mrt_name_map
 
-def plot_rms_time_series3(avg_rms_per_mrt, mwl_index, mrt_regions_map, mrt_name_map):
+def plot_rms_time_series3(avg_rms_per_mrt, mwl_index, mrt_regions_map, mrt_name_map, subject_id, video_type):
     """
     Plot the average RMS time series for each MRT separately in red and overlay the overall
-    average (Mental Workload Index) in green.
+    average (Mental Workload Index) in green. The subject ID and video type are appended to the title.
     """
     # Plot each MRT's average RMS time series in red.
     for mrt_id, rms_values in avg_rms_per_mrt.items():
@@ -618,19 +675,24 @@ def plot_rms_time_series3(avg_rms_per_mrt, mwl_index, mrt_regions_map, mrt_name_
                  label=f"{mrt_name} (MRT ID {mrt_id})")
         plt.xlabel("Time Activation (0 - 11250)", fontsize=12)
         plt.ylabel("Average RMS Value", fontsize=12)
-        plt.title(f"Average RMS for {mrt_name} (MRT ID {mrt_id})\nRegions: {regions_str}", fontsize=14)
+        # Append subject id and video type to the original title.
+        plt.title(f"Average RMS for {mrt_name} (MRT ID {mrt_id})\nRegions: {regions_str}\nSubject: {subject_id} | Video: {video_type}", fontsize=14)
         plt.legend(loc='upper right', fontsize=10)
         plt.grid(axis="y", linestyle="--", alpha=0.6)
         plt.tight_layout()
         plt.show()
 
-    # Plot overall MWL Index in green.
+    # Compute overall average across all MRT time series.
+    all_mrt_values = np.array(list(avg_rms_per_mrt.values()))
+    overall_avg = np.mean(all_mrt_values, axis=0)
+
+    # Plot the overall average RMS time series in green.
     plt.figure(figsize=(16, 5))
-    plt.plot(range(len(mwl_index)), mwl_index, color='green', linewidth=2,
+    plt.plot(range(len(overall_avg)), overall_avg, color='green', linewidth=2,
              label="Mental Workload Index")
-    plt.xlabel("Time ", fontsize=12)
+    plt.xlabel("Time Activation (0 - 11250)", fontsize=12)
     plt.ylabel("Sum of Average RMS of Cortical Regions", fontsize=12)
-    plt.title("Mental Workload Index", fontsize=14)
+    plt.title(f" Mental Workload Index\nSubject: {subject_id} | Video: {video_type}", fontsize=14)
     plt.legend(loc='upper right', fontsize=10)
     plt.grid(axis="y", linestyle="--", alpha=0.6)
     plt.tight_layout()
@@ -648,10 +710,13 @@ while True:
     # Simulated voxel-to-region mapping (ensure size matches videodata's voxel count).
     map_voxel = np.random.randint(1, 103, size=videodata.shape[0])
 
+    subject_id = input("Enter the Subject ID: ").strip()
+    video_type = input("Enter the Video Type: ").strip()
+
     try:
         avg_rms_per_mrt, mwl_index, mrt_regions_map, mrt_name_map = compute_rms_time_series3(videodata, map_voxel, region_data)
         print("RMS Computation and MRT Sorting Complete.")
-        plot_rms_time_series3(avg_rms_per_mrt, mwl_index, mrt_regions_map, mrt_name_map)
+        plot_rms_time_series3(avg_rms_per_mrt, mwl_index, mrt_regions_map, mrt_name_map, subject_id, video_type)
     except (KeyError, FileNotFoundError, ValueError) as e:
         print(f"❌ Error: {e}")
 
